@@ -1,0 +1,35 @@
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Sid": "AllowStopSpecificInstance",
+      "Effect": "Allow",
+      "Action": "ecs:StopInstance",
+      "Resource": "acs:ecs:${region}:${account_id}:instance/${instance_id}"
+    },
+    {
+      "Sid": "AllowDescribeInstanceStatus",
+      "Effect": "Allow",
+      "Action": "ecs:DescribeInstanceStatus",
+      "Resource": "acs:ecs:${region}:${account_id}:instance/${instance_id}"
+    },
+    {
+      "Sid": "AllowTableStoreAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ots:GetRow",
+        "ots:PutRow",
+        "ots:UpdateRow"
+      ],
+      "Resource": "acs:ots:${region}:${account_id}:instance/${ots_instance_name}/table/${ots_table_name}"
+    },
+    {
+      "Sid": "AllowLogging",
+      "Effect": "Allow",
+      "Action": [
+        "log:PostLogStoreLogs"
+      ],
+      "Resource": "acs:log:${region}:${account_id}:project/${log_project}/logstore/${log_store}"
+    }
+  ]
+}

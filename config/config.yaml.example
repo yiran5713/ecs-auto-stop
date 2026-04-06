@@ -1,0 +1,41 @@
+# Configuration file for ECS Auto-Stop
+# Copy this file to config.yaml and update with your values
+
+# Alibaba Cloud Configuration
+alibaba_cloud:
+  region: ap-northeast-1
+  
+# Target ECS Instance
+ecs:
+  instance_id: i-6we3byqbhe23ks7bywn0
+
+# Table Store Configuration
+table_store:
+  instance_name: ssh-monitor
+  table_name: ecs_ssh_status
+  endpoint: https://ssh-monitor.ap-northeast-1.ots.aliyuncs.com
+
+# Function Compute Configuration  
+function_compute:
+  service_name: ecs-auto-stop
+  # HTTP endpoint will be auto-generated after deployment
+
+# Authentication
+security:
+  # Generate with: openssl rand -hex 32
+  auth_token: your-secure-token-here
+
+# Notifications (optional)
+notifications:
+  dingtalk:
+    enabled: false
+    webhook_url: ""
+
+# Monitoring Settings
+thresholds:
+  # Idle time in seconds before stopping (default: 1 hour)
+  idle_threshold_seconds: 3600
+  # Health check threshold - alert if no report received (default: 10 minutes)
+  health_check_threshold_seconds: 600
+  # Cron interval for checking (default: every 5 minutes)
+  check_interval_cron: "0/5 * * * * ?"

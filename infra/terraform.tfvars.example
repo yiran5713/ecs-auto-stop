@@ -1,0 +1,25 @@
+# Terraform Variables Example
+# Copy this file to terraform.tfvars and update with your values
+
+# Required: Alibaba Cloud region
+region = "ap-northeast-1"
+
+# ECS RAM Role Authentication (for running on ECS instance with attached RAM role)
+# Set to true when deploying from an ECS instance with RAM role attached
+use_ecs_ram_role = true
+
+# ECS RAM role name (required when use_ecs_ram_role is true)
+# This is the name of the RAM role attached to this ECS instance
+# Leave empty to auto-detect from instance metadata
+ecs_ram_role_name = ""
+
+# Required: ECS instance ID to monitor
+target_instance_id = "i-6we3byqbhe23ks7bywn0"
+
+# Required: Authentication token for HTTP endpoint
+# Generate a secure random token, e.g.: openssl rand -hex 32
+auth_token = "your-secure-token-here"
+
+# Optional: DingTalk webhook URL for notifications
+# Leave empty to disable notifications
+dingtalk_webhook = ""

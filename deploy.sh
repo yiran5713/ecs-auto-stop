@@ -1,0 +1,199 @@
+#!/bin/bash
+#
+# Deployment script for ECS Auto-Stop Automation
+# This script deploys all cloud resources using Terraform
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
+INFRA_DIR="$PROJECT_ROOT/infra"
+
+echo "=== ECS Auto-Stop Deployment ==="
+echo ""
+
+# Configure ECS RAM role in terraform.tfvars
+configure_ecs_ram_role() {
+    local role_name="$1"
+    local tfvars_file="$INFRA_DIR/terraform.tfvars"
+    
+    if [[ ! -f "$tfvars_file" ]]; then
+        return
+    fi
+    
+    # Check if ecs_ram_role_name is empty or needs updating
+    local current_role=$(grep 'ecs_ram_role_name' "$tfvars_file" | cut -d'"' -f2)
+    
+    if [[ -z "$current_role" && -n "$role_name" ]]; then
+        echo "  - Auto-configuring ECS RAM role name in terraform.tfvars..."
+        sed -i "s/ecs_ram_role_name = \"\"/ecs_ram_role_name = \"$role_name\"/" "$tfvars_file"
+    fi
+    
+    # Ensure use_ecs_ram_role is set to true
+    if grep -q 'use_ecs_ram_role = false' "$tfvars_file"; then
+        sed -i 's/use_ecs_ram_role = false/use_ecs_ram_role = true/' "$tfvars_file"
+    fi
+}
+
+# Check prerequisites
+check_prerequisites() {
+    echo "[1/6] Checking prerequisites..."
+    
+    # Check Terraform
+    if ! command -v terraform &> /dev/null; then
+        echo "[ERROR] Terraform is not installed. Please install it first:"
+        echo "  Ubuntu/Debian:"
+        echo "    wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg"
+        echo "    echo \"deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main\" | sudo tee /etc/apt/sources.list.d/hashicorp.list"
+        echo "    sudo apt update && sudo apt install terraform"
+        echo "  Or visit: https://www.terraform.io/downloads"
+        exit 1
+    fi
+    # Get terraform version (compatible with both Linux and macOS)
+    TERRAFORM_VERSION=$(terraform version | head -n1 | sed 's/Terraform v//')
+    echo "  - Terraform: $TERRAFORM_VERSION"
+    
+    # Check Alibaba Cloud credentials
+    # First check if running on ECS with RAM role
+    ECS_RAM_ROLE=$(curl -s --connect-timeout 1 http://100.100.100.200/latest/meta-data/ram/security-credentials/ 2>/dev/null || echo "")
+    
+    if [[ -n "$ECS_RAM_ROLE" ]]; then
+        echo "  - Alibaba Cloud credentials: using ECS RAM role ($ECS_RAM_ROLE)"
+        # Auto-configure ECS RAM role in terraform.tfvars if not already set
+        configure_ecs_ram_role "$ECS_RAM_ROLE"
+    elif [[ -n "$ALICLOUD_ACCESS_KEY" || -n "$ALIBABA_CLOUD_ACCESS_KEY_ID" ]]; then
+        echo "  - Alibaba Cloud credentials: configured via environment variables"
+    else
+        echo "[ERROR] Alibaba Cloud credentials not configured."
+        echo "  If running on ECS with RAM role attached, make sure:"
+        echo "    1. The ECS instance has a RAM role attached"
+        echo "    2. Set use_ecs_ram_role=true in terraform.tfvars"
+        echo "  Otherwise, set environment variables:"
+        echo "    export ALICLOUD_ACCESS_KEY=your-access-key"
+        echo "    export ALICLOUD_SECRET_KEY=your-secret-key"
+        exit 1
+    fi
+    
+    # Check terraform.tfvars
+    if [[ ! -f "$INFRA_DIR/terraform.tfvars" ]]; then
+        echo "[ERROR] terraform.tfvars not found."
+        echo "  Please copy terraform.tfvars.example to terraform.tfvars and configure:"
+        echo "    cp $INFRA_DIR/terraform.tfvars.example $INFRA_DIR/terraform.tfvars"
+        exit 1
+    fi
+    echo "  - terraform.tfvars: found"
+    
+    echo ""
+}
+
+# Initialize Terraform
+init_terraform() {
+    echo "[2/6] Initializing Terraform..."
+    cd "$INFRA_DIR"
+    terraform init -upgrade
+    echo ""
+}
+
+# Plan deployment
+plan_deployment() {
+    echo "[3/6] Planning deployment..."
+    cd "$INFRA_DIR"
+    terraform plan -out=tfplan
+    echo ""
+}
+
+# Apply deployment
+apply_deployment() {
+    echo "[4/6] Applying deployment..."
+    cd "$INFRA_DIR"
+    terraform apply tfplan
+    echo ""
+}
+
+# Get outputs
+get_outputs() {
+    echo "[5/6] Retrieving deployment outputs..."
+    cd "$INFRA_DIR"
+    
+    FC_ENDPOINT=$(terraform output -raw fc_http_endpoint 2>/dev/null || echo "")
+    OTS_INSTANCE=$(terraform output -raw ots_instance_name 2>/dev/null || echo "")
+    
+    echo ""
+    echo "=== Deployment Outputs ==="
+    terraform output
+    echo ""
+}
+
+# Generate ECS agent config
+generate_agent_config() {
+    echo "[6/6] Generating ECS agent configuration..."
+    
+    cd "$INFRA_DIR"
+    
+    FC_ENDPOINT=$(terraform output -raw fc_http_endpoint 2>/dev/null || echo "https://YOUR_FC_ENDPOINT")
+    TARGET_INSTANCE=$(grep 'target_instance_id' terraform.tfvars | cut -d'"' -f2)
+    AUTH_TOKEN=$(grep 'auth_token' terraform.tfvars | cut -d'"' -f2)
+    
+    # Generate config.env for ECS agent
+    CONFIG_FILE="$PROJECT_ROOT/ecs-agent/config.env"
+    
+    cat > "$CONFIG_FILE" <<EOF
+# SSH Monitor Configuration
+# Generated by deploy.sh on $(date)
+# Copy this file to /opt/ssh-monitor/config.env on the target ECS instance
+
+# Function Compute HTTP endpoint URL
+FC_ENDPOINT=$FC_ENDPOINT
+
+# ECS Instance ID to monitor
+INSTANCE_ID=$TARGET_INSTANCE
+
+# Authentication token
+AUTH_TOKEN=$AUTH_TOKEN
+EOF
+
+    echo "  - Generated: $CONFIG_FILE"
+    echo ""
+}
+
+# Main
+main() {
+    check_prerequisites
+    init_terraform
+    plan_deployment
+    
+    echo "=== Review the plan above ==="
+    read -p "Do you want to apply this plan? (yes/no): " confirm
+    
+    if [[ "$confirm" != "yes" ]]; then
+        echo "Deployment cancelled."
+        exit 0
+    fi
+    
+    apply_deployment
+    get_outputs
+    generate_agent_config
+    
+    echo "=== Deployment Complete ==="
+    echo ""
+    echo "Next steps:"
+    echo "1. Copy the ECS agent to your target instance:"
+    echo "   scp -r $PROJECT_ROOT/ecs-agent root@YOUR_ECS_IP:/tmp/"
+    echo ""
+    echo "2. Install the agent on the ECS instance:"
+    echo "   ssh root@YOUR_ECS_IP 'cd /tmp/ecs-agent && ./install.sh'"
+    echo ""
+    echo "3. Verify the config file:"
+    echo "   ssh root@YOUR_ECS_IP 'cat /opt/ssh-monitor/config.env'"
+    echo ""
+    echo "4. Test the agent manually:"
+    echo "   ssh root@YOUR_ECS_IP '/opt/ssh-monitor/report.sh'"
+    echo ""
+    echo "5. Check logs:"
+    echo "   ssh root@YOUR_ECS_IP 'tail -f /var/log/ssh-monitor.log'"
+    echo ""
+}
+
+# Run main function
+main "$@"
